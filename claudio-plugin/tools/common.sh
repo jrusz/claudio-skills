@@ -96,6 +96,21 @@ version_gte() {
 }
 
 # ============================================================================
+# SUDO UTILITIES
+# ============================================================================
+
+# Run command with sudo if available, otherwise run directly
+# Args: $@ - command and arguments
+# Exit code: exit code of the command
+maybe_sudo() {
+    if command_exists sudo; then
+        sudo "$@"
+    else
+        "$@"
+    fi
+}
+
+# ============================================================================
 # PATH UTILITIES
 # ============================================================================
 

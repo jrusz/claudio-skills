@@ -2,16 +2,14 @@
 
 ## Overview
 
-This repository contains **Claudio Skills Plugin** - a Claude Code plugin that extends Claude with specialized skills for DevOps and cloud-native development workflows. The plugin provides five skills designed to streamline interactions with GitLab, Kubernetes, Konflux, and AWS CloudWatch Logs.
+This repository contains **Claudio Skills Plugin** - a Claude Code plugin that extends Claude with specialized skills for DevOps and cloud-native development workflows. The plugin provides skills designed to streamline interactions with GitLab, Konflux, and AWS CloudWatch Logs.
 
 ## What is this for?
 
 This plugin enables Claude Code to:
 
-- **Interact with GitLab repositories** using the official `glab` CLI
 - **Analyze GitLab CI/CD job failures** using structured scripts for pipeline debugging
-- **Manage Kubernetes clusters** using `kubectl` operations
-- **Orchestrate Konflux releases** for production deployments
+- **Orchestrate Konflux production releases** with self-contained stage-to-production workflows
 - **Troubleshoot and analyze AWS CloudWatch Logs** for application debugging and monitoring
 
 These skills allow you to leverage Claude as an intelligent assistant for complex DevOps tasks, from querying merge requests to deploying production releases and troubleshooting application issues across multiple components.
@@ -27,11 +25,19 @@ claudio-plugin/
 │   ├── TOOLS.md                 # Tool installation guide
 │   ├── aws-cli/
 │   │   └── install.sh           # AWS CLI installer
-│   └── jq/
-│       └── install.sh           # jq installer
+│   ├── jq/
+│   │   └── install.sh           # jq installer
+│   ├── kubectl/
+│   │   └── install.sh           # kubectl installer
+│   ├── glab/
+│   │   └── install.sh           # glab GitLab CLI installer
+│   ├── skopeo/
+│   │   └── install.sh           # skopeo installer
+│   └── python/
+│       ├── install.sh           # Python pip installer
+│       ├── konflux-release-requirements.txt  # PyYAML
+│       └── slack-requirements.txt            # requests
 └── skills/
-    ├── gitlab/
-    │   └── SKILL.md             # GitLab operations skill
     ├── gitlab-job-analyzer/
     │   ├── SKILL.md             # GitLab CI/CD job analysis skill
     │   └── scripts/
@@ -41,9 +47,7 @@ claudio-plugin/
     │       ├── compare_job_logs.sh      # Compare job runs
     │       ├── analyze_dependencies.sh  # Dependency graph analysis
     │       └── extract_errors.sh        # Error categorization
-    ├── kubernetes/
-    │   └── SKILL.md             # Kubernetes management skill
-    ├── konflux/
+    ├── konflux-release/
     │   ├── SKILL.md             # Konflux release workflow skill
     │   └── scripts/
     │       └── generate_release_yaml.py  # Release YAML generator
@@ -107,10 +111,25 @@ source "$SCRIPT_DIR/../common.sh"
 - Used by: aws-log-analyzer skill
 - Supports: Linux x86_64, ARM64
 
+**glab** (`tools/glab/install.sh`)
+- Installs glab GitLab CLI
+- Used by: gitlab, gitlab-job-analyzer, konflux-release skills
+- Supports: Linux x86_64, ARM64
+
 **jq** (`tools/jq/install.sh`)
 - Installs jq JSON processor
 - Used by: Multiple skills for JSON parsing
 - Supports: Linux x86_64, ARM64
+
+**kubectl** (`tools/kubectl/install.sh`)
+- Installs kubectl Kubernetes CLI
+- Used by: konflux-release skill
+- Supports: Linux x86_64, ARM64
+
+**skopeo** (`tools/skopeo/install.sh`)
+- Installs skopeo via system package manager (dnf/apt/apk)
+- Used by: konflux-release skill
+- Supports: Linux (RHEL, Fedora, Ubuntu, Debian, Alpine)
 
 ### Adding New Tools
 
@@ -238,24 +257,7 @@ When a new version is released, Renovate automatically creates a PR to update th
 
 ## Skills Included
 
-### 1. GitLab Skill
-
-**Purpose:** Interact with GitLab repositories using the `glab` CLI tool.
-
-**Use cases:**
-- List and view merge requests
-- Check pipeline and job status
-- Resolve git tags to commit SHAs
-- Manage issues, releases, and repository metadata
-- View merge request diffs and CI/CD pipelines
-
-**Key features:**
-- Prefers built-in `glab` commands over API calls
-- Falls back to `glab api --method GET` for operations not covered by built-in commands
-- Supports GitLab.com, Self-Managed, and Dedicated instances
-- Safe read-only operations by default
-
-### 2. GitLab Job Analyzer Skill
+### 1. GitLab Job Analyzer Skill
 
 **Purpose:** Analyze GitLab CI/CD job failures, parse logs, and identify error patterns.
 
@@ -271,27 +273,11 @@ When a new version is released, Renovate automatically creates a PR to update th
 - JSON-first output for programmatic parsing
 - Time-based and runner-based analysis
 - Error pattern recognition and categorization
-- Integrates with the gitlab skill for underlying `glab` operations
+- Uses `glab` CLI directly through structured scripts
 
-### 3. Kubernetes Skill
+### 2. Konflux Release Skill
 
-**Purpose:** Interact with Kubernetes clusters using `kubectl` commands.
-
-**Use cases:**
-- Get and describe Kubernetes resources (pods, deployments, services, etc.)
-- Filter resources using label selectors
-- Query resources across namespaces
-- Extract specific fields using jq
-
-**Key features:**
-- Follows "default first, then JSON drill-down" pattern to avoid context pollution
-- Efficient querying with namespace and label filtering
-- JSON output for programmatic processing
-- Works with pre-configured kubectl contexts
-
-### 4. Konflux Skill
-
-**Purpose:** Work with Konflux - a build and release platform based on OpenShift and Tekton.
+**Purpose:** Create production releases on the Konflux platform with a self-contained stage-to-production workflow.
 
 **Use cases:**
 - Create production releases from successful stage releases
@@ -301,13 +287,14 @@ When a new version is released, Renovate automatically creates a PR to update th
 - Follow stage-to-production deployment workflows
 
 **Key features:**
-- Automates stage → production release pattern
-- Extracts metadata from stage releases
+- Self-contained skill with all commands inline (kubectl, glab, skopeo)
+- Supports manual mode and config-driven mode with external product configs
+- Automates stage-to-production release pattern
 - Applies release notes templates with version/variant substitution
 - Includes Python script for deterministic YAML generation
-- Integrates with GitLab skill for tag resolution and Kubernetes skill for resource querying
+- Auto-increments release sequence numbers
 
-### 5. AWS Log Analyzer Skill
+### 3. AWS Log Analyzer Skill
 
 **Purpose:** Troubleshoot and analyze logs from AWS CloudWatch Logs for debugging and monitoring.
 
@@ -330,26 +317,16 @@ When a new version is released, Renovate automatically creates a PR to update th
 
 Each skill has its own dependencies:
 
-**GitLab Skill:**
-- `glab` - GitLab CLI tool
-- User already authenticated
-- Optional: `jq` for JSON parsing
-
 **GitLab Job Analyzer Skill:**
 - `glab` - GitLab CLI tool (used internally by scripts)
 - User already authenticated
 - Optional: `jq` for JSON parsing
 
-**Kubernetes Skill:**
-- `kubectl` - Kubernetes CLI
-- Configured kubectl context
-- Optional: `jq` for JSON parsing
-
-**Konflux Skill:**
-- `kubectl` (via kubernetes skill)
-- `glab` (via gitlab skill)
-- `python3` for YAML generation script
+**Konflux Release Skill:**
+- `kubectl` - Kubernetes operations
+- `python3` + `PyYAML` for YAML generation script
 - `jq` for JSON parsing
+- Optional: `glab` for tag resolution, `skopeo` for image inspection
 
 **AWS Log Analyzer Skill:**
 - `aws` CLI - AWS CLI v2 recommended
@@ -367,52 +344,45 @@ The skills follow these principles:
 1. **Tool preference:** Use native CLI commands over API calls when possible
 2. **Efficient querying:** Start with table output, drill down to specific resources
 3. **Read-only by default:** Prefer GET operations for safety
-4. **Integration:** Skills work together (e.g., Konflux uses GitLab and Kubernetes skills)
+4. **Integration:** Skills can work together or independently (e.g., Konflux Release is self-contained)
 5. **Context efficiency:** Avoid dumping large JSON outputs unless necessary
 
 ## Example Workflows
 
-### Production Release Workflow (Konflux + GitLab + Kubernetes)
+### Production Release Workflow (Konflux Release Skill)
 
 When a user asks to create a production release:
 
-1. **Resolve tag to commit SHA** (GitLab skill)
+1. **Resolve tag to commit SHA**
    ```bash
-   glab api --method GET projects/owner%2Frepo/repository/commits/v1.2.3 | jq -r '.id'
+   glab api --method GET "projects/owner%2Frepo/repository/commits/v1.2.3" | jq -r '.id'
    ```
 
-2. **Find stage releases by SHA** (Kubernetes skill)
+2. **Find stage releases by SHA**
    ```bash
    kubectl get releases -n namespace -l "pac.test.appstudio.openshift.io/sha=<full-sha>"
    ```
 
-3. **Filter to successful releases** (Kubernetes skill)
+3. **Filter to successful releases**
    - Check `.status.conditions[type=Released].status = "True"`
 
-4. **Generate production YAMLs** (Konflux skill)
+4. **Generate production YAMLs**
    ```bash
-   scripts/generate_release_yaml.py \
-     --stage-release <stage-release-name> \
-     --version 1.2.3 \
-     --namespace <namespace> \
-     --output out/component-prod.yaml
+   /full/path/to/generate_release_yaml.py --component my-comp --version 1.2.3 --snapshot snap-abc --release-plan my-app-prod --release-name my-comp-1-2-3-prod-1 --accelerator Variant --namespace my-ns --release-notes-template /path/to/template.yaml --release-type RHEA --output out/component-prod.yaml
    ```
 
-5. **Deploy releases** (Kubernetes skill)
-   ```bash
-   kubectl apply -f out/
-   ```
+5. **Deliver for review** - commit generated files and open MR (config-driven) or deliver locally (manual)
 
-### Log Troubleshooting Workflow (AWS Log Analyzer + Kubernetes)
+### Log Troubleshooting Workflow (AWS Log Analyzer)
 
 When a user asks to investigate application errors:
 
-1. **Identify the log group** (AWS Log Analyzer skill)
+1. **Identify the log group**
    ```bash
    aws logs describe-log-groups --log-group-name-prefix /aws/application/
    ```
 
-2. **Search for recent errors** (AWS Log Analyzer skill)
+2. **Search for recent errors**
    ```bash
    scripts/time_range.sh "1 hour ago"
    aws logs filter-log-events \
@@ -422,17 +392,17 @@ When a user asks to investigate application errors:
      --end-time $END_TIME
    ```
 
-3. **Correlate with pod events** (Kubernetes skill)
+3. **Correlate with pod events**
    ```bash
    kubectl get events --sort-by='.lastTimestamp'
    ```
 
-4. **Trace request across services** (AWS Log Analyzer skill)
+4. **Trace request across services**
    ```bash
    scripts/multi_group_search.sh "request-id-12345" "/aws/application/"
    ```
 
-5. **Analyze error patterns** (AWS Log Analyzer skill - using Insights)
+5. **Analyze error patterns**
    ```bash
    aws logs start-query \
      --log-group-name /aws/application/myapp \
