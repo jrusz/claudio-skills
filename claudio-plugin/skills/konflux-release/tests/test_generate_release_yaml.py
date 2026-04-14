@@ -146,8 +146,8 @@ class TestGenerateProdReleaseYaml:
         cve_file.write_text("CVE-2024-1234\nCVE-2024-5678\n")
         cves = self._call(release_type="RHSA", cves_file=str(cve_file))["spec"]["data"]["releaseNotes"]["cves"]
         assert cves == [
-            {"key": "CVE-2024-1234", "component": "my-comp"},
-            {"key": "CVE-2024-5678", "component": "my-comp"},
+            {"key": "CVE-2024-1234", "component": "my-comp-3-3-0"},
+            {"key": "CVE-2024-5678", "component": "my-comp-3-3-0"},
         ]
 
     def test_template_substitution_applied(self):

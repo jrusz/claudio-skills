@@ -29,6 +29,7 @@ This skill includes helper scripts in `scripts/` directory.
 - **ReleasePlan** - defines how and where releases are deployed
 - **Application** - group of related components
 - **Component** - individual buildable/deployable unit
+- **Stage-RC Release** - a release candidate deployed to a staging registry for validation before production. Follows the same workflow as production but uses stage-rc release plans
 
 ## Script Execution Requirements
 
@@ -80,6 +81,8 @@ This pattern matches the script in any user directory or plugin cache location.
 
 Key principle: stage and production releases reference the same Snapshot because it points to the same built container images.
 
+The same workflow applies to **stage-RC releases**: they use stage-rc release plans instead of production plans, targeting a staging registry for release candidate validation before production.
+
 ### Step 1: Resolve Input to Commit SHA
 
 Three options depending on what the user provides:
@@ -125,6 +128,8 @@ kubectl get releases -n <namespace> -l "pac.test.appstudio.openshift.io/sha=<sha
 - Report any failed releases to the user
 - Do NOT generate production YAMLs for failed stage releases
 
+**Application alignment:** All stage releases in a batch must belong to the same Konflux application. Check the `appstudio.openshift.io/application` label on each release. If a component's stage release belongs to a different application, do not include it — flag it to the user. Never mix components from different applications in the same release batch.
+
 ### Step 5: Determine Component Properties
 
 For each successful stage release, extract:
@@ -140,15 +145,31 @@ Then determine:
 - **Release notes template** - select appropriate template based on component type and tech preview status
 - **Variant/accelerator display name** - derive from component name
 
-### Step 6: Auto-Increment Release Version
+### Step 5b: Extract Stage Image URLs
 
-Query existing production releases to determine the next sequence number:
+After identifying successful stage releases, extract the timestamped image URL from each release's artifacts:
 
 ```bash
-kubectl get releases -n <namespace> --sort-by=.metadata.creationTimestamp -o json | jq '[.items[] | select(.metadata.name | startswith("<component>-<version-dashed>-prod-"))] | length'
+kubectl get release <stage-release-name> -n <namespace> -o json | jq -r '.status.artifacts.images[] | select(.name == "<component>") | .urls[] | select(test("-[0-9]+$"))'
 ```
 
-Use length + 1 as the next sequence number for the release name.
+The filter `test("-[0-9]+$")` selects the URL whose tag ends with the numeric build timestamp, distinguishing it from `-source`, version-only, and digest tags. Include this URL in the release summary so reviewers can verify the exact image being promoted.
+
+### Step 6: Auto-Increment Release Sequence
+
+Determine the next sequence number by counting existing releases whose name starts with the same prefix (base-component + version + release-type):
+
+```bash
+kubectl get releases -n <namespace> -o json | jq '[.items[] | select(.metadata.name | startswith("<base-component>-<version-dashed>-<release-type>-"))] | length'
+```
+
+Use length + 1 as the next sequence number.
+
+For full-application releases, count by release plan instead:
+
+```bash
+kubectl get releases -n <namespace> -o json | jq '[.items[] | select(.spec.releasePlan == "<release-plan>")] | length'
+```
 
 ### Step 7: Generate Production Release YAMLs
 
@@ -177,10 +198,9 @@ The script automatically creates the output directory. Use the provided script f
 ### Step 8: Generate Release Summary
 
 Create a summary document that includes:
-- Release date
+- Release date and release type (production, stage-rc, etc.)
 - Git commit SHA and source URL
-- Component status table (component name, status, release name, release plan)
-- Stage release information
+- Component table with: component name, type (GA/TP), release name, release plan, stage image URL (from Step 5b), snapshot, and stage release
 - Generated YAML filenames
 - Links to Konflux UI for monitoring (if available)
 
@@ -242,7 +262,8 @@ The script replaces all placeholders recursively through all string values.
 ### Release Types
 
 - **RHEA** (default) - Enhancement Advisory, standard feature releases
-- **RHSA** - Security Advisory, requires `--cves-file` parameter
+- **RHSA** - Security Advisory, requires `--cves-file` and `--component` parameters
+  - The script auto-constructs the versioned CVE component name from `--component` and `--version` (e.g., `my-component` + `3.2.2` → `my-component-3-2-2`)
   - CVE file format: one CVE per line (CVE-YYYY-NNNNN)
   - Comments starting with # are ignored
   - Empty lines are skipped
@@ -251,26 +272,35 @@ The script replaces all placeholders recursively through all string values.
 
 ### Structure
 
+`RELEASE_SUMMARY.md` is organised into **one section per release type** (production, stage-rc, etc.). Each section is appended when that type of release is created. Never mix release types in a single table.
+
 ```markdown
 # Release Summary
 
-## Release Information
-- Date: YYYY-MM-DD
-- Version: X.Y.Z
-- Commit: <sha>
-- Source: <repository-url>
+## Production Release (YYYY-MM-DD)
 
-## Components
+### Components
 
-| Component | Status | Release Name | Release Plan |
-|-----------|--------|--------------|--------------|
-| component-1 | Ready | name-prod-1 | plan-prod |
-| component-2 | Ready | name-prod-2 | plan-tp-prod |
+| Component | Type | Release Name | Release Plan | Stage Image | Snapshot | Stage Release |
+|-----------|------|--------------|--------------|-------------|----------|---------------|
+| component-1 | GA | name-prod-1 | plan-prod | quay.io/org/img:tag-ts | snap-name | stage-rel-name |
+| component-2 | TP | name-tp-prod-1 | plan-tp-prod | quay.io/org/img:tag-ts | snap-name | stage-rel-name |
 
-## Generated Files
+### Commit SHA
+
+| Field | Value |
+|-------|-------|
+| SHA | abc123... |
+| Source | <repository-url> |
+
+### Generated Files
 - component-1-prod.yaml
 - component-2-prod.yaml
 ```
+
+- **Stage Image** — the timestamped image URL extracted from `.status.artifacts.images[].urls[]` (see Step 5b)
+- **Snapshot** and **Stage Release** — linked to Konflux UI if available
+- Each release type (prod, stage-rc) gets its own heading and table
 
 ### Storage
 
@@ -278,25 +308,56 @@ In config-driven mode, follow the config repo's CLAUDE.md for where to store the
 
 In manual mode, store it alongside the generated YAMLs in the output directory.
 
+## Konflux UI Links
+
+When a Konflux UI base URL is available (provided by the config repo or user), construct monitoring links using these patterns:
+
+- **Prefix:** `<base-url>/ns/<tenant>/applications/<application>`
+- **Releases list:** `<prefix>/releases`
+- **Snapshot:** `<prefix>/snapshots/<snapshot-name>`
+- **Release:** `<prefix>/releases/<release-name>`
+
+Include these links in the release summary and any merge request description to help reviewers verify the release.
+
 ## Naming Conventions
 
 ### Release Names
 
-Pattern: `<component>-<version-dashed>-prod-<seq>`
+**Single-component releases** (one Release CR per component — the default):
 
-Example: `my-component-1-2-0-prod-1`
+Pattern: `<base-component>-<version-dashed>-<release-type>-<seq>`
 
-- `<component>` - full component name
-- `<version-dashed>` - version with dots replaced by dashes
-- `prod` - environment
-- `<seq>` - sequence number (auto-incremented)
+Example: `my-comp-cuda-1-2-0-prod-1`, `my-comp-rocm-1-2-0-stage-rc-1`
 
-### ReleasePlan Names
+- `<base-component>` - component name from the product config (without branch/version suffixes that Konflux appends to the Konflux component name)
+- `<version-dashed>` - semantic release version with dots replaced by dashes (e.g., `3.3.1` → `3-3-1`, `3.4.0-ea.2` → `3-4-0-ea-2`)
+- `<release-type>` - release type suffix (e.g., `prod`, `stage-rc`)
+- `<seq>` - sequence number (auto-incremented per base-component + release-type, starting from 1)
 
-Common patterns:
-- GA production: `<app>-prod`
-- Tech preview production: `<app>-tech-preview-prod`
-- Stage: `<app>-stage`
+This makes it possible to identify which component/variant was released without opening the Release CR. Do NOT use the full Konflux component name (which includes branch version suffixes) — that causes version duplication in the release name. Keep names under 63 characters (Kubernetes limit).
+
+**Full-application releases** (one Release CR covers all components in a snapshot):
+
+Pattern: `<release-plan-name>-<seq>`
+
+- `<release-plan-name>` - the target release plan name
+- `<seq>` - sequence number (auto-incremented per release plan, starting from 1)
+
+### ReleasePlan Types
+
+There are four types of release plans. The skill **creates** Release CRs targeting prod, tech-preview-prod, or stage-rc plans. It **reads** stage releases (created automatically by CI) to discover snapshots.
+
+| Type | Pattern | Purpose | Created by |
+|------|---------|---------|------------|
+| Stage | `<app>-stage` | Automatic nightly/development builds | CI (on push) — skill only reads these |
+| Stage-RC | `<app>-stage-rc` | Release candidate validation on staging registry | Skill (manual trigger) |
+| GA production | `<app>-prod` | GA production release | Skill (manual trigger) |
+| TP production | `<app>-tech-preview-prod` | Tech preview production release | Skill (manual trigger) |
+
+**Which plan to use when creating a Release CR:**
+- User asks for a **production release** → use `*-prod` (GA components) or `*-tech-preview-prod` (tech preview components)
+- User asks for a **stage-rc release** → use `*-stage-rc`
+- Never create Release CRs targeting `*-stage` — those are automatic
 
 ## Multi-Component Release
 

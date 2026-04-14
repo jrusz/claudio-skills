@@ -19,7 +19,7 @@ Usage:
                              --output out/my-product-cuda-ubi9-3.2.5-prod.yaml
 
 Arguments:
-    --component NAME              Component name (required)
+    --component NAME              Component name (required for RHSA with --cves-file)
     --version VERSION             Semantic version (e.g., 3.2.5) (required)
     --snapshot NAME               Snapshot name (required)
     --release-plan NAME           Release plan name (required)
@@ -157,7 +157,8 @@ def generate_prod_release_yaml(component_name, version, snapshot, release_plan,
     if release_type == 'RHSA' and cves_file:
         cve_ids = load_cves_from_file(cves_file)
         # Build CVE list with component name
-        release_notes['cves'] = [{'key': cve_id, 'component': component_name} for cve_id in cve_ids]
+        versioned_component = f"{component_name}-{version.replace('.', '-')}"
+        release_notes['cves'] = [{'key': cve_id, 'component': versioned_component} for cve_id in cve_ids]
 
     # Build production release YAML
     prod_release = {
