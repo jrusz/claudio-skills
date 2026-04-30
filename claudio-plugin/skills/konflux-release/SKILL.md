@@ -40,7 +40,7 @@ This skill includes helper scripts in `scripts/` directory.
 
 **Correct execution:**
 ```bash
-/full/path/to/konflux-release/scripts/generate_release_yaml.py --component foo --version 1.0 --snapshot bar --release-plan prod --release-name foo-1-0-prod-1 --accelerator Variant --namespace ns --release-notes-template /path/to/template.yaml --release-type RHEA --output /path/to/out/foo.yaml
+/full/path/to/konflux-release/scripts/generate_release_yaml.py --version 1.0 --snapshot bar --release-plan prod --release-name foo-1-0-prod-1 --accelerator Variant --namespace ns --release-notes-template /path/to/template.yaml --release-type RHEA --output /path/to/out/foo-prod-1.yaml
 ```
 
 **Incorrect execution:**
@@ -138,6 +138,8 @@ For each successful stage release, extract:
 - **Snapshot name:** `.spec.snapshot`
 - **Stage ReleasePlan:** `.spec.releasePlan`
 
+**Component names must come from the cluster.** Always use the actual Konflux component name from the `appstudio.openshift.io/component` label — never construct or guess component names. Konflux components use **branch-based** suffixes (e.g., `-3-3` for branch `3.3`), not release version suffixes (e.g., `-3-3-1` for version `3.3.1`). Z-stream releases like `3.3.1` reuse the same components as `3.3.0`.
+
 Then determine:
 
 - **Tech preview status** - from product config or user input
@@ -176,11 +178,10 @@ kubectl get releases -n <namespace> -o json | jq '[.items[] | select(.spec.relea
 The script automatically creates the output directory. Use the provided script for each component (full path, single line):
 
 ```bash
-/full/path/to/konflux-release/scripts/generate_release_yaml.py --component <component-name> --version <version> --snapshot <snapshot-name> --release-plan <prod-release-plan> --release-name <release-name> --accelerator <accelerator> --namespace <namespace> --release-notes-template <template-path> --release-type <RHEA|RHSA> --output /path/to/output/<component>-prod.yaml
+/full/path/to/konflux-release/scripts/generate_release_yaml.py --version <version> --snapshot <snapshot-name> --release-plan <prod-release-plan> --release-name <release-name> --accelerator <accelerator> --namespace <namespace> --release-notes-template <template-path> --release-type <RHEA|RHSA> --output /path/to/output/<component>-prod-<seq>.yaml
 ```
 
 **Required parameters:**
-- `--component` - component name
 - `--version` - semantic version
 - `--snapshot` - snapshot name from the successful stage release
 - `--release-plan` - production release plan name
@@ -189,10 +190,14 @@ The script automatically creates the output directory. Use the provided script f
 - `--namespace` - Kubernetes namespace
 - `--release-notes-template` - path to release notes YAML template
 - `--release-type` - RHEA (default) or RHSA
-- `--output` - output file path
+- `--output` - output file path (must include sequence number — see Output File Naming below)
+
+**RHSA parameters (required when `--release-type RHSA`):**
+- `--cves-file` - path to CVE list file
+- `--component` - single actual Konflux component name for CVE entries, OR
+- `--cve-components` - comma-separated list of actual Konflux component names (for full-application releases with multiple components per Release CR)
 
 **Optional parameters:**
-- `--cves-file` - path to CVE list file (required for RHSA releases)
 - `--grace-period` - grace period in days (default: 30)
 
 ### Step 8: Generate Release Summary
@@ -262,11 +267,26 @@ The script replaces all placeholders recursively through all string values.
 ### Release Types
 
 - **RHEA** (default) - Enhancement Advisory, standard feature releases
-- **RHSA** - Security Advisory, requires `--cves-file` and `--component` parameters
-  - The script auto-constructs the versioned CVE component name from `--component` and `--version` (e.g., `my-component` + `3.2.2` → `my-component-3-2-2`)
+- **RHSA** - Security Advisory, requires `--cves-file` and either `--component` (single) or `--cve-components` (multiple)
+  - **CVE component names must be actual Konflux component names** from the snapshot — never construct or guess them. Query the snapshot to get the real component names (see "RHSA Component Names" below)
   - CVE file format: one CVE per line (CVE-YYYY-NNNNN)
   - Comments starting with # are ignored
   - Empty lines are skipped
+
+#### RHSA Component Names
+
+For RHSA releases, each CVE entry requires a `component` field. This must be the **actual Konflux component name** as it exists in the cluster — the same name that appears in the `appstudio.openshift.io/component` label on releases and in the snapshot's component list.
+
+**How to get real component names from a snapshot:**
+```bash
+kubectl get snapshot <snapshot-name> -n <namespace> -o json | jq -r '.spec.components[].name'
+```
+
+**For single-component releases:** pass the Konflux component name directly as `--component` (e.g., `--component rhaiis-cuda-ubi9-3-4`).
+
+**For full-application releases (e.g., rhelai):** the snapshot contains many components. Each CVE must be paired with each affected component. Extract all component names from the snapshot and pass them as a comma-separated list to `--cve-components` (e.g., `--cve-components bootc-cuda-3-3,bootc-rocm-3-3,bootc-cuda-aws-3-3`). This generates one CVE entry per CVE × component combination.
+
+**Common mistake:** do NOT construct component names by appending the release version (e.g., `bootc-cuda-3-3-1`). Konflux components use branch-based suffixes (`-3-3`), not release version suffixes (`-3-3-1`). A z-stream release like `3.3.1` uses the same `-3-3` components as `3.3.0`.
 
 ## Release Summary
 
@@ -294,8 +314,8 @@ The script replaces all placeholders recursively through all string values.
 | Source | <repository-url> |
 
 ### Generated Files
-- component-1-prod.yaml
-- component-2-prod.yaml
+- component-1-prod-1.yaml
+- component-2-prod-1.yaml
 ```
 
 - **Stage Image** — the timestamped image URL extracted from `.status.artifacts.images[].urls[]` (see Step 5b)
@@ -342,6 +362,16 @@ Pattern: `<release-plan-name>-<seq>`
 
 - `<release-plan-name>` - the target release plan name
 - `<seq>` - sequence number (auto-incremented per release plan, starting from 1)
+
+### Output File Naming
+
+Output YAML filenames MUST include the sequence number to prevent overwriting previous releases:
+
+Pattern: `<base-component>-<release-type>-<seq>.yaml`
+
+Examples: `my-comp-cuda-prod-1.yaml`, `my-comp-cuda-stage-rc-2.yaml`
+
+**Never overwrite existing release files.** Each Release CR YAML is an immutable record of a release. When generating a new release for a component that already has release files, always create a new file with the next sequence number — never reuse or overwrite an existing filename.
 
 ### ReleasePlan Types
 

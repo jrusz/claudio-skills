@@ -16,10 +16,11 @@ Usage:
                              --release-notes-template /tmp/ga-rhea.yaml \\
                              --release-type RHSA \\
                              --cves-file cves \\
-                             --output out/my-product-cuda-ubi9-3.2.5-prod.yaml
+                             --output out/my-product-cuda-ubi9-prod-4.yaml
 
 Arguments:
-    --component NAME              Component name (required for RHSA with --cves-file)
+    --component NAME              Single Konflux component name for CVE entries
+    --cve-components NAMES        Comma-separated Konflux component names for CVE entries
     --version VERSION             Semantic version (e.g., 3.2.5) (required)
     --snapshot NAME               Snapshot name (required)
     --release-plan NAME           Release plan name (required)
@@ -123,7 +124,7 @@ def apply_template_substitutions(template, version, accelerator):
 
 def generate_prod_release_yaml(component_name, version, snapshot, release_plan,
                                release_name, accelerator, namespace, release_notes_template,
-                               release_type, cves_file, grace_period):
+                               release_type, cves_file, grace_period, cve_components=None):
     """
     Generate production release YAML.
 
@@ -139,6 +140,7 @@ def generate_prod_release_yaml(component_name, version, snapshot, release_plan,
         release_type: "RHEA" or "RHSA"
         cves_file: Path to CVE file (optional)
         grace_period: Grace period in days
+        cve_components: Comma-separated Konflux component names for CVE entries (optional)
 
     Returns:
         dict: Production release YAML structure
@@ -156,9 +158,14 @@ def generate_prod_release_yaml(component_name, version, snapshot, release_plan,
     # Add CVEs for RHSA if file provided
     if release_type == 'RHSA' and cves_file:
         cve_ids = load_cves_from_file(cves_file)
-        # Build CVE list with component name
-        versioned_component = f"{component_name}-{version.replace('.', '-')}"
-        release_notes['cves'] = [{'key': cve_id, 'component': versioned_component} for cve_id in cve_ids]
+        if cve_components:
+            components = [c.strip() for c in cve_components.split(',') if c.strip()]
+        elif component_name:
+            components = [component_name]
+        else:
+            components = []
+        release_notes['cves'] = [{'key': cve_id, 'component': comp}
+                                 for cve_id in cve_ids for comp in components]
 
     # Build production release YAML
     prod_release = {
@@ -209,6 +216,8 @@ def main():
                        help='Release type (default: RHEA)')
     parser.add_argument('--cves-file', type=str,
                        help='Path to CVE list file (optional, for RHSA)')
+    parser.add_argument('--cve-components', type=str,
+                       help='Comma-separated actual Konflux component names for CVE entries (e.g., bootc-cuda-3-3,bootc-rocm-3-3)')
     parser.add_argument('--grace-period', type=int, default=30,
                        help='Grace period in days (default: 30)')
     parser.add_argument('--output', type=str,
@@ -216,8 +225,8 @@ def main():
 
     args = parser.parse_args()
 
-    if args.release_type == 'RHSA' and args.cves_file and args.component is None:
-        print("Error: --component is required for RHSA releases with a CVE file", file=sys.stderr)
+    if args.release_type == 'RHSA' and args.cves_file and args.component is None and args.cve_components is None:
+        print("Error: --component or --cve-components is required for RHSA releases with a CVE file", file=sys.stderr)
         sys.exit(1)
 
     # Load release notes template
@@ -235,7 +244,8 @@ def main():
         release_notes_template,
         args.release_type,
         args.cves_file,
-        args.grace_period
+        args.grace_period,
+        args.cve_components
     )
 
     # Convert to YAML string

@@ -118,6 +118,7 @@ class TestGenerateProdReleaseYaml:
             release_type="RHEA",
             cves_file=None,
             grace_period=30,
+            cve_components=None,
         )
         defaults.update(overrides)
         return generate_prod_release_yaml(**defaults)
@@ -146,8 +147,60 @@ class TestGenerateProdReleaseYaml:
         cve_file.write_text("CVE-2024-1234\nCVE-2024-5678\n")
         cves = self._call(release_type="RHSA", cves_file=str(cve_file))["spec"]["data"]["releaseNotes"]["cves"]
         assert cves == [
-            {"key": "CVE-2024-1234", "component": "my-comp-3-3-0"},
-            {"key": "CVE-2024-5678", "component": "my-comp-3-3-0"},
+            {"key": "CVE-2024-1234", "component": "my-comp"},
+            {"key": "CVE-2024-5678", "component": "my-comp"},
+        ]
+
+    def test_rhsa_with_cve_components(self, tmp_path):
+        cve_file = tmp_path / "cves.txt"
+        cve_file.write_text("CVE-2024-1234\n")
+        cves = self._call(
+            release_type="RHSA",
+            cves_file=str(cve_file),
+            cve_components="bootc-cuda-3-3,bootc-rocm-3-3",
+        )["spec"]["data"]["releaseNotes"]["cves"]
+        assert cves == [
+            {"key": "CVE-2024-1234", "component": "bootc-cuda-3-3"},
+            {"key": "CVE-2024-1234", "component": "bootc-rocm-3-3"},
+        ]
+
+    def test_rhsa_cve_components_override_component_name(self, tmp_path):
+        cve_file = tmp_path / "cves.txt"
+        cve_file.write_text("CVE-2024-9999\n")
+        cves = self._call(
+            component_name="ignored-comp",
+            release_type="RHSA",
+            cves_file=str(cve_file),
+            cve_components="actual-comp-3-3",
+        )["spec"]["data"]["releaseNotes"]["cves"]
+        assert cves == [{"key": "CVE-2024-9999", "component": "actual-comp-3-3"}]
+
+    def test_rhsa_cve_components_filters_empty(self, tmp_path):
+        cve_file = tmp_path / "cves.txt"
+        cve_file.write_text("CVE-2024-1234\n")
+        cves = self._call(
+            release_type="RHSA",
+            cves_file=str(cve_file),
+            cve_components="comp-a,,comp-b, ,",
+        )["spec"]["data"]["releaseNotes"]["cves"]
+        assert cves == [
+            {"key": "CVE-2024-1234", "component": "comp-a"},
+            {"key": "CVE-2024-1234", "component": "comp-b"},
+        ]
+
+    def test_rhsa_multi_cves_multi_components(self, tmp_path):
+        cve_file = tmp_path / "cves.txt"
+        cve_file.write_text("CVE-2024-1111\nCVE-2024-2222\n")
+        cves = self._call(
+            release_type="RHSA",
+            cves_file=str(cve_file),
+            cve_components="comp-a,comp-b",
+        )["spec"]["data"]["releaseNotes"]["cves"]
+        assert cves == [
+            {"key": "CVE-2024-1111", "component": "comp-a"},
+            {"key": "CVE-2024-1111", "component": "comp-b"},
+            {"key": "CVE-2024-2222", "component": "comp-a"},
+            {"key": "CVE-2024-2222", "component": "comp-b"},
         ]
 
     def test_template_substitution_applied(self):
@@ -228,6 +281,22 @@ class TestMain:
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code != 0
+
+    def test_rhsa_with_cve_components_cli(self, tmp_path, monkeypatch, capsys):
+        cve_file = tmp_path / "cves.txt"
+        cve_file.write_text("CVE-2024-1234\n")
+        argv = self._base_argv(tmp_path) + [
+            "--release-type", "RHSA",
+            "--cves-file", str(cve_file),
+            "--cve-components", "bootc-cuda-3-3,bootc-rocm-3-3",
+        ]
+        monkeypatch.setattr(sys, "argv", argv)
+        main()
+        cves = yaml.safe_load(capsys.readouterr().out)["spec"]["data"]["releaseNotes"]["cves"]
+        assert cves == [
+            {"key": "CVE-2024-1234", "component": "bootc-cuda-3-3"},
+            {"key": "CVE-2024-1234", "component": "bootc-rocm-3-3"},
+        ]
 
     def test_missing_required_arg_fails(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["prog", "--version", "3.3.0"])
