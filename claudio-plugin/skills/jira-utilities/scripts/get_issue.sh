@@ -32,4 +32,9 @@ fi
 ensure_auth
 
 echo "Fetching issue $KEY..." >&2
-acli jira workitem view "$KEY" --json
+TMPOUT=$(mktemp)
+trap 'rm -f "$TMPOUT"' EXIT
+acli jira workitem view "$KEY" --json > "$TMPOUT"
+CLEAN=$(sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g; s/\r//g' "$TMPOUT")
+jq '.' <<< "$CLEAN" 2>/dev/null \
+    || sed -n '/^{/,/^}/p' <<< "$CLEAN" | jq '.'

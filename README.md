@@ -365,6 +365,52 @@ Each skill includes its own test scenarios. Run skill-specific scripts directly 
 - [GitLab Branch Manager Skill](claudio-plugin/skills/gitlab-branch-manager/SKILL.md)
 - [Jira Utilities Skill](claudio-plugin/skills/jira-utilities/SKILL.md)
 
+## Claude Code Permissions
+
+When using this plugin you typically want to allow skill scripts to run without per-call prompts while keeping raw tool access (direct `acli`, `curl`, etc.) subject to approval. Copy this block into the target project's `~/.claude/settings.json` and adjust paths as needed.
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Skill(claudio-plugin:aws-log-analyzer)",
+      "Skill(claudio-plugin:gitlab-job-analyzer)",
+      "Skill(claudio-plugin:konflux-release)",
+      "Skill(claudio-plugin:slack-utilities)",
+      "Skill(claudio-plugin:jira-utilities)",
+      "Skill(claudio-plugin:jira-release-setup)",
+      "Skill(claudio-plugin:jira-sprint-manager)",
+      "Skill(claudio-plugin:jira-cve-tracker)",
+      "Skill(claudio-plugin:jira-gap-audit)",
+      "Bash(/path/to/claudio-skills/**)",
+      "Bash(mempalace*)",
+      "Read(/home/$USER/.claude/**)"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "enabledPlugins": {
+    "claudio-plugin@claudio-skills": true
+  },
+  "extraKnownMarketplaces": {
+    "claudio-skills": {
+      "source": {
+        "source": "directory",
+        "path": "/path/to/claudio-skills"
+      }
+    }
+  }
+}
+```
+
+**Key design decisions:**
+
+- `Bash(/path/to/claudio-skills/**)` — skill scripts run without prompts; replace with your actual plugin path
+- `Bash(mempalace*)` — needed if you use MemPalace for session memory
+- **Do NOT add** `Bash(acli*)`, `Bash(curl*)`, or `Bash(python3*)` — keeping raw tools out of the allow list means a broken skill will surface as a prompt rather than silently calling tools directly
+- Add new `Skill(...)` entries incrementally as domain skills are deployed
+- `Read(/home/$USER/.claude/**)` — allows reading Claude config files (CLAUDE.md, memory files)
+
 ## Contributing
 
 Contributions are welcome! Please:

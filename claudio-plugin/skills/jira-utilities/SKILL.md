@@ -15,8 +15,6 @@ Generic helper utilities for common Jira Cloud operations via the official Atlas
 
 Fields that `acli` does not expose as CLI flags (priority, components, team UUID, activity-type custom fields) are applied transparently via a follow-up REST API PATCH inside the wrapper scripts — so no functionality is lost compared to the previous Python implementation.
 
-All analysis — CVE regex extraction, deduplication, date-proximity clustering — is performed in `cve_tracker.sh` using an embedded jq script.
-
 ## Prerequisites
 
 **Required environment variables:**
@@ -152,6 +150,12 @@ Credentials are stored in `~/.config/acli/` and persist for the session.
 
 **Output:** JSON from acli with the created issue key.
 
+> **Key extraction:** The JSON contains many nested `"key"` fields (e.g. inside `statusCategory`). Always use `jq -r '.key'` to extract the top-level issue key — never `grep '"key"' | head -1`:
+> ```bash
+> KEY=$(./scripts/create_issue.sh PROJ "My issue" 2>/dev/null | jq -r '.key')
+> echo "Created: $KEY"
+> ```
+
 ---
 
 ### Update Issue
@@ -264,26 +268,73 @@ Credentials are stored in `~/.config/acli/` and persist for the session.
 
 ---
 
-### CVE Tracker
+### Assign Sprint
 
-**Script:** `scripts/cve_tracker.sh`
+**Script:** `scripts/assign_sprint.sh`
 
-Queries Vulnerability-type issues via `acli`, deduplicates by CVE ID (common when multiple issues exist per CVE across variants/architectures), groups by fix version or due-date cluster, and produces a release estimate summary.
-
-All analysis — CVE regex extraction, deduplication, date-proximity clustering, status aggregation — is performed with an embedded `jq` script using `reduce`, `group_by`, `strptime`/`mktime` for date arithmetic.
+Add one or more issues to a sprint by sprint ID.
 
 **Usage:**
 ```bash
-./scripts/cve_tracker.sh <project> [options]
+./scripts/assign_sprint.sh <sprint_id> ISSUE-KEY [ISSUE-KEY ...]
 ```
 
-**Options:**
-- `--filter SUBSTR` - Case-insensitive substring filter on issue summary
-- `--issue-type TYPE` - Issue type to query (default: `Vulnerability`)
-- `--status open|all` - `open` excludes Closed issues (default)
-- `--cluster-days N` - Window in days for grouping unassigned issues by due date (default: 14)
-- `--format table|json` - Output format (default: `table`)
-- `--verbose` - Show individual CVE IDs per group (table mode)
+**Example:**
+```bash
+./scripts/assign_sprint.sh 65352 PROJ-1 PROJ-2 PROJ-3
+```
+
+**Output:** `{"sprint_id": 65352, "added": ["PROJ-1", ...]}` (or Jira error JSON).
+
+---
+
+### Comment Issue
+
+**Script:** `scripts/comment_issue.sh`
+
+Add a comment to an existing issue.
+
+**Usage:**
+```bash
+./scripts/comment_issue.sh <issue_key> "comment text"
+./scripts/comment_issue.sh <issue_key> --file comment.txt
+```
+
+**Examples:**
+```bash
+./scripts/comment_issue.sh PROJ-123 "Deployed to staging. Waiting for QA sign-off."
+./scripts/comment_issue.sh PROJ-123 --file release-notes.txt
+```
+
+---
+
+### Transition Issue
+
+**Script:** `scripts/transition_issue.sh`
+
+List available transitions for an issue, or apply a transition by name or ID.
+
+**Usage:**
+```bash
+./scripts/transition_issue.sh <issue_key> --list
+./scripts/transition_issue.sh <issue_key> --to <status_name>
+```
+
+**Examples:**
+```bash
+# Discover available transitions (uses REST API — no acli equivalent)
+./scripts/transition_issue.sh PROJ-123 --list
+
+# Close a duplicate issue (uses acli jira workitem transition)
+./scripts/transition_issue.sh PROJ-123 --to Closed
+
+# Move to In Progress
+./scripts/transition_issue.sh PROJ-123 --to "In Progress"
+```
+
+**Output:** acli JSON response on success.
+
+> **Note:** Jira Cloud does not grant delete permission to regular users. Use `--to Closed` to retire duplicate issues instead of attempting deletion (which returns HTTP 403).
 
 ---
 
